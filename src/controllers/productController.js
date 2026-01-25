@@ -41,6 +41,19 @@ async function getSequelizeProduct() {
   }
 }
 
+async function getSequelizeModels() {
+  try {
+    const mod = await import("../models/index.js");
+    const exported = mod.default || mod;
+    // prefer exported.models map
+    if (exported.models) return exported.models;
+    // fallback named exports
+    return { Product: exported.Product || exported.Product, Supplier: exported.Supplier || exported.Supplier, Brand: exported.Brand || exported.Brand };
+  } catch (e) {
+    return null;
+  }
+}
+
 // GET ALL PRODUCTS (with optional pagination/search)
 export const getProducts = async (req, res) => {
   try {
@@ -62,11 +75,15 @@ export const getProducts = async (req, res) => {
       if (lowStock === "true") where.quantity = { [(await import("sequelize")).Op.lte]:  (Number(req.query.threshold) || 5) };
 
       const offset = (Number(page) - 1) * Number(limit);
+      const models = await getSequelizeModels();
+      const Brand = models && models.Brand;
+      const include = Brand ? [{ model: Brand, as: 'brand' }] : [];
       const { count, rows } = await Product.findAndCountAll({
         where,
         limit: Number(limit),
         offset,
         order: [["name", "ASC"]],
+        include,
       });
       // normalize instances to plain objects and ensure image fields present
       const data = rows.map(r => normalizeImageFields(typeof r.toJSON === 'function' ? r.toJSON() : r));
@@ -102,9 +119,12 @@ export const getProduct = async (req, res) => {
     if (!idOrBarcode) return res.status(400).json({ error: "id or barcode required" });
 
     if (Product) {
-      const byPk = await Product.findByPk(idOrBarcode);
+      const models = await getSequelizeModels();
+      const Brand = models && models.Brand;
+      const include = Brand ? [{ model: Brand, as: 'brand' }] : [];
+      const byPk = await Product.findByPk(idOrBarcode, { include });
       if (byPk) return res.json(normalizeImageFields(typeof byPk.toJSON === 'function' ? byPk.toJSON() : byPk));
-      const byBarcode = await Product.findOne({ where: { barcode: idOrBarcode } });
+      const byBarcode = await Product.findOne({ where: { barcode: idOrBarcode }, include });
       if (byBarcode) return res.json(normalizeImageFields(typeof byBarcode.toJSON === 'function' ? byBarcode.toJSON() : byBarcode));
       return res.status(404).json({ error: "Product not found" });
     }
@@ -158,6 +178,7 @@ export const createProduct = async (req, res) => {
     request.input("quantity", sql.Int, payload.quantity || 0);
     request.input("unit", sql.NVarChar(32), payload.unit || null);
     request.input("category_id", sql.UniqueIdentifier, payload.categoryId || null);
+    request.input("brand_id", sql.UniqueIdentifier, payload.brandId || null);
     request.input("image_url", sql.NVarChar(255), payload.image_url || null);
     request.input("image_public_id", sql.NVarChar(255), payload.image_public_id || null);
     request.input("supplier_id", sql.UniqueIdentifier, payload.supplierId || null);
@@ -169,9 +190,9 @@ export const createProduct = async (req, res) => {
     if (check.recordset.length) return res.status(409).json({ error: "barcode already exists" });
 
     const insertQ = `
-      INSERT INTO products (name, description, sku, barcode, price, cost, quantity, unit, category_id, supplier_id, reorder_level, tax_rate, is_active, image_url, image_public_id)
+      INSERT INTO products (name, description, sku, barcode, price, cost, quantity, unit, category_id, brand_id, supplier_id, reorder_level, tax_rate, is_active, image_url, image_public_id)
       OUTPUT inserted.*
-      VALUES (@name, @description, @sku, @barcode, @price, @cost, @quantity, @unit, @category_id, @supplier_id, @reorder_level, @tax_rate, @is_active, @image_url, @image_public_id)
+      VALUES (@name, @description, @sku, @barcode, @price, @cost, @quantity, @unit, @category_id, @brand_id, @supplier_id, @reorder_level, @tax_rate, @is_active, @image_url, @image_public_id)
     `;
     const inserted = await request.query(insertQ);
     return res.status(201).json(inserted.recordset[0]);
@@ -196,8 +217,11 @@ export const updateProduct = async (req, res) => {
 
     const Product = await getSequelizeProduct();
     if (Product) {
-      const byPk = await Product.findByPk(id);
-      const instance = byPk || (await Product.findOne({ where: { barcode: id } }));
+      const models = await getSequelizeModels();
+      const Brand = models && models.Brand;
+      const include = Brand ? [{ model: Brand, as: 'brand' }] : [];
+      const byPk = await Product.findByPk(id, { include });
+      const instance = byPk || (await Product.findOne({ where: { barcode: id }, include }));
       if (!instance) return res.status(404).json({ error: "Product not found" });
       if (payload.sku) payload.sku = String(payload.sku).trim().toUpperCase();
       if (payload.barcode) payload.barcode = String(payload.barcode).trim();
@@ -209,9 +233,9 @@ export const updateProduct = async (req, res) => {
     const pool = await poolPromise;
     const fields = [];
     const request = pool.request();
-    const allowed = ["name","description","sku","barcode","price","cost","quantity","unit","category_id","supplier_id","reorder_level","tax_rate","is_active","image_url","image_public_id"];
+    const allowed = ["name","description","sku","barcode","price","cost","quantity","unit","category_id","brand_id","supplier_id","reorder_level","tax_rate","is_active","image_url","image_public_id"];
     for (const key of allowed) {
-      const bodyKey = key === "category_id" ? "categoryId" : key === "supplier_id" ? "supplierId" : key;
+      const bodyKey = key === "category_id" ? "categoryId" : key === "brand_id" ? "brandId" : key === "supplier_id" ? "supplierId" : key;
       if (Object.prototype.hasOwnProperty.call(payload, bodyKey)) {
         const val = payload[bodyKey];
         fields.push(`${key} = @${key}`);
