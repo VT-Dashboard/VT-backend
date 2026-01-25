@@ -7,6 +7,7 @@ import categoryRoutes from "./routes/categoryRoutes.js";
 import posRoutes from "./routes/posRoutes.js";
 import orderRoutes from "./routes/orderRoutes.js";
 import dashboardRoutes from "./routes/dashboardRoutes.js";
+import qzRoutes from "./routes/qzRoutes.js";
 
 const app = express();
 
@@ -33,6 +34,9 @@ app.use("/api/orders", orderRoutes);
 
 // Mount order routes
 app.use("/api/dashboard", dashboardRoutes);
+
+// QZ Tray endpoints
+app.use("/qz", qzRoutes);
 
 // health
 app.get("/health", (req, res) => res.json({ ok: true }));
